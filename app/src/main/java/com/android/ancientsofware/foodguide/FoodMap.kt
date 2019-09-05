@@ -12,6 +12,8 @@ import android.os.Looper
 import android.provider.Settings
 import android.support.v4.app.ActivityCompat
 import android.support.v7.app.AlertDialog
+import com.android.ancientsofware.foodguide.Models.RestaurantModel
+import com.android.ancientsofware.foodguide.RetroFitApi.RestaurantsNearByWorker
 import com.google.android.gms.location.*
 
 import com.google.android.gms.maps.CameraUpdateFactory
@@ -27,6 +29,9 @@ class FoodMap : AppCompatActivity(), OnMapReadyCallback {
     private lateinit var mLastLocation: Location
     private lateinit var mLocationRequest: LocationRequest
     private lateinit var mFusedLocationProviderClient: FusedLocationProviderClient
+    private lateinit var mSavedLocation: LatLng
+    private lateinit var mRestaurantsNearByWorker: RestaurantsNearByWorker
+    private var mRestaurantsNearByList: ArrayList<RestaurantModel>? = ArrayList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,18 +46,61 @@ class FoodMap : AppCompatActivity(), OnMapReadyCallback {
             buildAlertMessageNoGps()
         }
 
-        if(checkPermissionForLocation(this))
-            startLocationUpdates()
+        mRestaurantsNearByWorker = RestaurantsNearByWorker()
+
     }
 
+    override fun onPause() {
+        super.onPause()
+        stoplocationUpdates()
+        saveLastLocation()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if(checkPermissionForLocation(this))
+            startLocationUpdates()
+
+    }
+
+    fun initializeSavedLastLocation() {
+        val sharedPreference =  getSharedPreferences("FOOD_GUIDE",Context.MODE_PRIVATE)
+        val lastLocationExist = sharedPreference.getBoolean("LAST_LOCATION", false)
+        if(lastLocationExist) {
+            var latitude = sharedPreference.getLong("LAST_LOCATION_LATITUDE", 0)
+            var longitude = sharedPreference.getLong("LAST_LOCATION_LONGITUDE", 0)
+
+            mSavedLocation = LatLng(latitude.toDouble(), longitude.toDouble())
+        }
+    }
+
+    fun saveLastLocation() {
+        if(::mLastLocation.isInitialized) {
+            val sharedPreference = getSharedPreferences("FOOD_GUIDE", Context.MODE_PRIVATE)
+            var editor = sharedPreference.edit()
+            editor.putBoolean("LAST_LOCATION", true)
+            editor.putLong("LAST_LOCATION_LATITUDE", mLastLocation.latitude.toLong())
+            editor.putLong("LAST_LOCATION_LONGITUDE", mLastLocation.longitude.toLong())
+            editor.commit()
+        }
+    }
 
     override fun onMapReady(googleMap: GoogleMap) {
         mMap = googleMap
 
+        mMap.setMinZoomPreference(14.0f);
+        mMap.setMaxZoomPreference(20.0f);
         if(::mLastLocation.isInitialized) {
             val location = LatLng(mLastLocation.latitude, mLastLocation.longitude)
             mMap.addMarker(MarkerOptions().position(location).title("You"))
             mMap.moveCamera(CameraUpdateFactory.newLatLng(location))
+        }
+        else {
+            initializeSavedLastLocation()
+            if(::mSavedLocation.isInitialized) {
+                mMap.addMarker(MarkerOptions().position(mSavedLocation).title("You"))
+                mMap.moveCamera(CameraUpdateFactory.newLatLng(mSavedLocation))
+            }
         }
     }
 
@@ -63,7 +111,6 @@ class FoodMap : AppCompatActivity(), OnMapReadyCallback {
                     PackageManager.PERMISSION_GRANTED){
                 true
             }else{
-                // Show the permission request
                 ActivityCompat.requestPermissions(this, arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION),
                         1)
                 false
@@ -100,7 +147,6 @@ class FoodMap : AppCompatActivity(), OnMapReadyCallback {
 
     private val mLocationCallback = object : LocationCallback() {
         override fun onLocationResult(locationResult: LocationResult) {
-            // do work here
             locationResult.lastLocation
             onLocationChanged(locationResult.lastLocation)
         }
@@ -110,6 +156,8 @@ class FoodMap : AppCompatActivity(), OnMapReadyCallback {
 
         mLastLocation = location
         if (mLastLocation != null) {
+            mRestaurantsNearByWorker.getUsers(mLastLocation.latitude.toString(), mLastLocation.longitude.toString())
+            mRestaurantsNearByList = mRestaurantsNearByWorker.mRestaurants
             onMapReady(mMap)
         }
     }
@@ -118,7 +166,7 @@ class FoodMap : AppCompatActivity(), OnMapReadyCallback {
 
         mLocationRequest = LocationRequest()
         mLocationRequest!!.priority = LocationRequest.PRIORITY_HIGH_ACCURACY
-        mLocationRequest!!.setInterval(5000)
+        mLocationRequest!!.setInterval(2000)
         mLocationRequest!!.setFastestInterval(1000)
 
         val builder = LocationSettingsRequest.Builder()
