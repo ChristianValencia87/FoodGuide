@@ -3,6 +3,8 @@ package com.android.ancientsofware.foodguide
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.drawable.BitmapDrawable
+import android.location.Geocoder
 import android.location.Location
 import android.location.LocationManager
 import android.os.Build
@@ -12,15 +14,19 @@ import android.os.Looper
 import android.provider.Settings
 import android.support.v4.app.ActivityCompat
 import android.support.v7.app.AlertDialog
-import com.android.ancientsofware.foodguide.Models.RestaurantModel
+import android.util.Log
+import com.android.ancientsofware.foodguide.Models.Restaurant
 import com.android.ancientsofware.foodguide.RetroFitApi.RestaurantsNearByWorker
+import com.android.ancientsofware.foodguide.Utils.ImageLoader
 import com.google.android.gms.location.*
 
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.SupportMapFragment
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.Marker
 import com.google.android.gms.maps.model.MarkerOptions
 
 class FoodMap : AppCompatActivity(), OnMapReadyCallback {
@@ -31,7 +37,9 @@ class FoodMap : AppCompatActivity(), OnMapReadyCallback {
     private lateinit var mFusedLocationProviderClient: FusedLocationProviderClient
     private lateinit var mSavedLocation: LatLng
     private lateinit var mRestaurantsNearByWorker: RestaurantsNearByWorker
-    private var mRestaurantsNearByList: ArrayList<RestaurantModel>? = ArrayList()
+    private var mRestaurantsNearByList: List<Restaurant> = ArrayList()
+    private lateinit var mLocationName: String
+    private lateinit var mYourPosition: Marker
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -88,11 +96,18 @@ class FoodMap : AppCompatActivity(), OnMapReadyCallback {
     override fun onMapReady(googleMap: GoogleMap) {
         mMap = googleMap
 
-        mMap.setMinZoomPreference(14.0f);
-        mMap.setMaxZoomPreference(20.0f);
+        mMap.setMinZoomPreference(12.0f);
+        mMap.setMaxZoomPreference(30.0f);
         if(::mLastLocation.isInitialized) {
+            putNearbyMarkers()
+            onMarkerListener()
             val location = LatLng(mLastLocation.latitude, mLastLocation.longitude)
-            mMap.addMarker(MarkerOptions().position(location).title("You"))
+            if(!::mYourPosition.isInitialized) {
+                mYourPosition = mMap.addMarker(MarkerOptions().position(location).title("You"))
+            }
+            else {
+                mYourPosition.position = LatLng(location.latitude, location.longitude)
+            }
             mMap.moveCamera(CameraUpdateFactory.newLatLng(location))
         }
         else {
@@ -102,6 +117,7 @@ class FoodMap : AppCompatActivity(), OnMapReadyCallback {
                 mMap.moveCamera(CameraUpdateFactory.newLatLng(mSavedLocation))
             }
         }
+
     }
 
     fun checkPermissionForLocation(context: Context): Boolean {
@@ -156,8 +172,9 @@ class FoodMap : AppCompatActivity(), OnMapReadyCallback {
 
         mLastLocation = location
         if (mLastLocation != null) {
-            mRestaurantsNearByWorker.getUsers(mLastLocation.latitude.toString(), mLastLocation.longitude.toString())
-            mRestaurantsNearByList = mRestaurantsNearByWorker.mRestaurants
+            mLocationName = getLocationName(mLastLocation.latitude, mLastLocation.longitude)
+            mRestaurantsNearByWorker.getUsers(mLastLocation.latitude.toString(), mLastLocation.longitude.toString(), mLocationName)
+            mRestaurantsNearByList = mRestaurantsNearByWorker.mRestaurants!!
             onMapReady(mMap)
         }
     }
@@ -166,7 +183,7 @@ class FoodMap : AppCompatActivity(), OnMapReadyCallback {
 
         mLocationRequest = LocationRequest()
         mLocationRequest!!.priority = LocationRequest.PRIORITY_HIGH_ACCURACY
-        mLocationRequest!!.setInterval(2000)
+        mLocationRequest!!.setInterval(5000)
         mLocationRequest!!.setFastestInterval(1000)
 
         val builder = LocationSettingsRequest.Builder()
@@ -185,6 +202,49 @@ class FoodMap : AppCompatActivity(), OnMapReadyCallback {
     }
 
     private fun stoplocationUpdates() {
-        mFusedLocationProviderClient!!.removeLocationUpdates(mLocationCallback)
+        if(::mFusedLocationProviderClient.isInitialized) {
+            mFusedLocationProviderClient!!.removeLocationUpdates(mLocationCallback)
+        }
+    }
+
+    private fun getLocationName( lat: Double, lon: Double): String {
+        var geoCoordinates = Geocoder(this.applicationContext)
+        var locationName = geoCoordinates.getFromLocation(lat.toDouble(), lon.toDouble(), 1)
+        if (locationName.size > 0) {
+            Log.d("TAG", locationName.get(0).locality)
+        }
+
+        return locationName.get(0).locality
+    }
+
+    private fun putNearbyMarkers() {
+        var icon = BitmapDescriptorFactory.fromBitmap(ImageLoader().loadImage(resources.openRawResource(R.raw.restaurant)))
+        mRestaurantsNearByList.forEach {
+            mMap.addMarker(MarkerOptions().position(LatLng(it.restaurant.location.latitude.toDouble(), it.restaurant.location.longitude.toDouble())).title(it.restaurant.name).
+                    icon(icon))
+        }
+    }
+
+    private fun onMarkerListener() {
+        mMap.setOnMarkerClickListener { marker ->
+            if (marker.title.compareTo("You") != 0) {
+                mRestaurantsNearByList.forEach {
+                    if(marker.title.compareTo(it.restaurant.name) == 0) {
+                        var bundle = Bundle()
+                        bundle.putString("NAME", it.restaurant.name)
+                        bundle.putString("ADDRESS", it.restaurant.location.address)
+                        bundle.putString("CITY", it.restaurant.location.city)
+                        bundle.putString("CUISINES", it.restaurant.cuisines)
+                        bundle.putString("PHONENUMBERS", it.restaurant.phone_numbers)
+                        bundle.putString("URL", it.restaurant.url)
+
+                        val intent = Intent(this, RestaurantInfo::class.java)
+                        intent.putExtras(bundle)
+                        startActivity(intent)
+                    }
+                }
+            }
+            true
+        }
     }
 }
